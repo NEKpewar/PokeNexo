@@ -177,7 +177,7 @@ public sealed class SysCord<T> where T : PKM, new()
         if (!SysCordSettings.Settings.BotEmbedStatus)
             return;
 
-        var botName = string.IsNullOrEmpty(SysCordSettings.HubConfig.BotName) ? "SysBot" : SysCordSettings.HubConfig.BotName;
+        var botName = string.IsNullOrEmpty(SysCordSettings.HubConfig.BotName) ? "PokeNexo" : SysCordSettings.HubConfig.BotName;
         var fullStatusMessage = $"**Estado**: {botName} esta {status}!";
         var thumbnailUrl = status == "En línea"
             ? "https://raw.githubusercontent.com/Daiivr/SysBot-Images/refs/heads/main/Bot%20Status/botgo.png"

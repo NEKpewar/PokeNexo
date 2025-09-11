@@ -1,35 +1,49 @@
 using Discord;
 using Discord.Commands;
-using System.Threading.Tasks;
 using System;
+using System.Threading.Tasks;
 
 namespace SysBot.Pokemon.Discord
 {
     public class StreamModule : ModuleBase<SocketCommandContext>
     {
-        private static readonly string[] StreamMessages = new[]
+        private static readonly string[] StreamMessages =
         {
-            "¡Dale un vistazo al stream!", "¡No te lo pierdas!", "¡Transmisión en vivo ahora!", "¡Únete a la diversión!", "¡En vivo ahora mismo!"
+            "¡Dale un vistazo al stream!",
+            "¡No te lo pierdas!",
+            "¡Transmisión en vivo ahora!",
+            "¡Únete a la diversión!",
+            "¡En vivo ahora mismo!"
         };
 
         [Command("stream")]
         [Alias("streamlink")]
         [Summary("Devuelve el enlace de transmisión del anfitrión.")]
-        public async Task PingAsync()
+        public async Task StreamAsync()
         {
             var settings = SysCordSettings.Settings;
-            var streamIconUrl = DiscordSettings.StreamOptions.StreamIconUrls[settings.Stream.StreamIcon];
-            var embedColor = GetEmbedColor(settings.Stream.StreamIcon); // Get the color based on the selected icon option
+            var iconOption = settings.Stream.StreamIcon;
 
-            var random = new Random();
-            var streamMessage = StreamMessages[random.Next(StreamMessages.Length)];
+            // Si no hay link configurado, usar Twitch por defecto
+            var streamLink = string.IsNullOrWhiteSpace(settings.Stream.StreamLink)
+                ? "https://twitch.tv/"
+                : settings.Stream.StreamLink;
+
+            var streamIconUrl = DiscordSettings.StreamOptions.StreamIconUrls[iconOption];
+            var embedColor = GetEmbedColor(iconOption);
+            var platformName = GetStreamPlatformName(iconOption);
+
+            var streamMessage = StreamMessages[new Random().Next(StreamMessages.Length)];
 
             var embed = new EmbedBuilder()
-                .WithTitle($"🎥 {GetStreamPlatformName(settings.Stream.StreamIcon)} Stream 🎥")
-                .WithDescription($"{streamMessage} \n\n[¡Haz clic aquí para ver el stream!]({settings.Stream.StreamLink})")
-                .WithUrl(settings.Stream.StreamLink) // Optional: Add the URL to the stream link here as well
+                .WithTitle($"🎥 {platformName} Stream 🎥")
+                .WithDescription($"{streamMessage}\n\n[🔗 Haz clic aquí para ver el stream]({streamLink})")
+                .WithUrl(streamLink)
                 .WithThumbnailUrl(streamIconUrl)
-                .WithColor(embedColor) // Set the color based on the selected icon option
+                .WithColor(embedColor)
+                .AddField("🌐 Plataforma", platformName, inline: true)
+                .AddField("📺 Enlace", $"[Click aquí]({streamLink})", inline: true)
+                .WithImageUrl("https://i.imgur.com/OmLhdAS.gif") // Banner del stream (puedes cambiar la URL)
                 .WithFooter(footer =>
                 {
                     footer.Text = $"Solicitado por {Context.User.Username}";
@@ -41,44 +55,26 @@ namespace SysBot.Pokemon.Discord
             await ReplyAsync(embed: embed).ConfigureAwait(false);
         }
 
-        private Color GetEmbedColor(StreamIconOption streamIconOption)
-        {
-            // Map the StreamIconOption to the desired color
-            switch (streamIconOption)
+        private static Color GetEmbedColor(StreamIconOption icon) =>
+            icon switch
             {
-                case StreamIconOption.Twitch:
-                    return new Color(145, 70, 255); // Twitch Purple
-                case StreamIconOption.Youtube:
-                    return new Color(255, 0, 0); // YouTube Red
-                case StreamIconOption.Facebook:
-                    return new Color(24, 119, 242); // Facebook Blue
-                case StreamIconOption.Kick:
-                    return new Color(0, 255, 0); // Kick Green
-                case StreamIconOption.TikTok:
-                    return new Color(0, 0, 0); // TikTok Black
-                default:
-                    return Color.Default;
-            }
-        }
+                StreamIconOption.Twitch => new Color(145, 70, 255),  // Twitch Purple
+                StreamIconOption.Youtube => new Color(255, 0, 0),    // YouTube Red
+                StreamIconOption.Facebook => new Color(24, 119, 242), // Facebook Blue
+                StreamIconOption.Kick => new Color(0, 255, 0),    // Kick Green
+                StreamIconOption.TikTok => new Color(0, 0, 0),      // TikTok Black
+                _ => Color.Default
+            };
 
-        private string GetStreamPlatformName(StreamIconOption streamIconOption)
-        {
-            // Map the StreamIconOption to the platform name
-            switch (streamIconOption)
+        private static string GetStreamPlatformName(StreamIconOption icon) =>
+            icon switch
             {
-                case StreamIconOption.Twitch:
-                    return "Twitch";
-                case StreamIconOption.Youtube:
-                    return "YouTube";
-                case StreamIconOption.Facebook:
-                    return "Facebook";
-                case StreamIconOption.Kick:
-                    return "Kick";
-                case StreamIconOption.TikTok:
-                    return "TikTok";
-                default:
-                    return "Stream";
-            }
-        }
+                StreamIconOption.Twitch => "Twitch",
+                StreamIconOption.Youtube => "YouTube",
+                StreamIconOption.Facebook => "Facebook",
+                StreamIconOption.Kick => "Kick",
+                StreamIconOption.TikTok => "TikTok",
+                _ => "Stream"
+            };
     }
 }

@@ -8,6 +8,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.IO;
+using System.IO.Compression;
+using System.Net.Http;
+
 
 namespace SysBot.Pokemon.Discord;
 
@@ -615,6 +619,231 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
 
         if (Context.Message is IUserMessage userMessage)
             _ = Helpers<T>.DeleteMessagesAfterDelayAsync(userMessage, null, 2);
+    }
+
+    #endregion
+
+    #region Batch Trades from ZIP
+
+    [Command("batchtradezip")]
+    [Alias("btz")]
+    [Summary("Hace que el bot intercambie varios Pokémon desde el archivo .zip proporcionado, hasta un máximo de 6 intercambios.")]
+    [RequireQueueRole(nameof(DiscordManager.RolesTradePlus))]
+    public async Task BatchTradeZipAsync()
+    {
+        var userID = Context.User.Id;
+        var code = Info.GetRandomTradeCode(userID);
+        await BatchTradeZipAsync(code).ConfigureAwait(false);
+    }
+
+    [Command("batchtradezip")]
+    [Alias("btz")]
+    [Summary("Hace que el bot intercambie varios Pokémon desde el archivo .zip proporcionado, hasta un máximo de 6 intercambios.")]
+    [RequireQueueRole(nameof(DiscordManager.RolesTradePlus))]
+    public async Task BatchTradeZipAsync([Summary("Trade Code")] int code)
+    {
+        // 1) Reglas del servidor: batch habilitado
+        if (!SysCord<T>.Runner.Config.Trade.TradeConfiguration.AllowBatchTrades)
+        {
+            await Helpers<T>.ReplyAndDeleteAsync(Context,
+                $"❌ {Context.User.Mention} Los intercambios por lotes están actualmente deshabilitados.", 2);
+            return;
+        }
+
+        // 2) Usuario no debe estar en cola
+        var userID = Context.User.Id;
+        if (!await Helpers<T>.EnsureUserNotInQueueAsync(userID).ConfigureAwait(false))
+        {
+            await Helpers<T>.SendAlreadyInQueueEmbedAsync(Context).ConfigureAwait(false);
+            return;
+        }
+
+        // 3) Validar adjunto
+        var attachment = Context.Message.Attachments.FirstOrDefault();
+        if (attachment == default)
+        {
+            await Helpers<T>.ReplyAndDeleteAsync(Context,
+                $"⚠️ {Context.User.Mention}, no se ha adjuntado ningún archivo. ¡Por favor, intenta de nuevo!", 2);
+            return;
+        }
+
+        if (!attachment.Filename.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            await Helpers<T>.ReplyAndDeleteAsync(Context,
+                $"⚠️ {Context.User.Mention}, el formato de archivo no es válido. Por favor, proporciona un archivo en formato .zip.", 2);
+            return;
+        }
+
+        const int maxTradesAllowed = 6;
+
+        // Mensaje de procesamiento
+        var processingMessage = await Context.Channel.SendMessageAsync(
+            $"{Context.User.Mention} Procesando tu archivo .zip…").ConfigureAwait(false);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // 4) Descargar y abrir zip
+                var http = new HttpClient();
+                var zipBytes = await http.GetByteArrayAsync(attachment.Url).ConfigureAwait(false);
+
+                await using var zipStream = new MemoryStream(zipBytes);
+                using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+
+                // 5) Leer entradas .pk* reales (no directorios), hasta 6
+                var entries = archive.Entries
+                    .Where(e => !string.IsNullOrEmpty(e.Name)) // ignora "directorios"
+                    .Where(e =>
+                    {
+                        var n = e.Name.ToLowerInvariant();
+                        return n.EndsWith(".pk1") || n.EndsWith(".pk2") || n.EndsWith(".pk3") ||
+                               n.EndsWith(".pk4") || n.EndsWith(".pk5") || n.EndsWith(".pk6") ||
+                               n.EndsWith(".pk7") || n.EndsWith(".pb7") || n.EndsWith(".pa8") ||
+                               n.EndsWith(".pb8") || n.EndsWith(".pk8") || n.EndsWith(".pk9");
+                    })
+                    .Take(maxTradesAllowed)
+                    .ToList();
+
+                // Límite
+                if (entries.Count == 0)
+                {
+                    await processingMessage.DeleteAsync().ConfigureAwait(false);
+                    await Helpers<T>.ReplyAndDeleteAsync(Context,
+                        $"⚠️ {Context.User.Mention}, no se encontraron archivos de Pokémon válidos dentro del .zip.", 5);
+                    return;
+                }
+
+                // 6) Parsear/validar cada PKM y acumular errores al estilo batch
+                var batchPokemonList = new List<T>();
+                var errors = new List<BatchTradeError>();
+                int index = 0;
+
+                foreach (var entry in entries)
+                {
+                    index++;
+
+                    try
+                    {
+                        await using var entryStream = entry.Open();
+                        var pkBytes = await ReadAllBytesAsync(entryStream).ConfigureAwait(false);
+                        var parsed = EntityFormat.GetFromBytes(pkBytes);
+
+                        if (parsed is not T pk)
+                        {
+                            errors.Add(new BatchTradeError
+                            {
+                                TradeNumber = index,
+                                SpeciesName = "Desconocido",
+                                ErrorMessage = "El archivo no corresponde a un formato compatible para este bot.",
+                                LegalizationHint = null,
+                                ShowdownSet = entry.Name
+                            });
+                            continue;
+                        }
+
+                        // Aplicar lógica estándar de ítems
+                        Helpers<T>.ApplyStandardItemLogic(pk);
+
+                        // Validación de legalidad
+                        var la = new LegalityAnalysis(pk);
+                        if (!la.Valid)
+                        {
+                            errors.Add(new BatchTradeError
+                            {
+                                TradeNumber = index,
+                                SpeciesName = SpeciesName.GetSpeciesName(pk.Species, (int)LanguageID.English),
+                                ErrorMessage = "El archivo no es legal para intercambio.",
+                                LegalizationHint = la.Report(verbose: false),
+                                ShowdownSet = entry.Name
+                            });
+                            continue;
+                        }
+
+                        // Mew Shiny en LGPE (PB7) no permitido
+                        if (pk is PB7 && pk.Species == (int)Species.Mew && pk.IsShiny)
+                        {
+                            errors.Add(new BatchTradeError
+                            {
+                                TradeNumber = index,
+                                SpeciesName = "Mew",
+                                ErrorMessage = "Mew no puede ser Shiny en LGPE (shiny lock).",
+                                LegalizationHint = "✔ Quita `Shiny: Yes` del archivo o solicita otro Pokémon.",
+                                ShowdownSet = entry.Name
+                            });
+                            continue;
+                        }
+
+                        // AdName / Spam
+                        if (SysCord<T>.Runner.Config.Trade.TradeConfiguration.EnableSpamCheck &&
+                            TradeExtensions<T>.HasAdName(pk, out _))
+                        {
+                            errors.Add(new BatchTradeError
+                            {
+                                TradeNumber = index,
+                                SpeciesName = SpeciesName.GetSpeciesName(pk.Species, (int)LanguageID.English),
+                                ErrorMessage = "Nombre de anuncio detectado en el Pokémon o en el OT.",
+                                LegalizationHint = "✔ Cambia el mote/OT a algo permitido.",
+                                ShowdownSet = entry.Name
+                            });
+                            continue;
+                        }
+
+                        // Preparación final
+                        pk.ResetPartyStats();
+
+                        batchPokemonList.Add(pk);
+                    }
+                    catch (Exception exEntry)
+                    {
+                        errors.Add(new BatchTradeError
+                        {
+                            TradeNumber = index,
+                            SpeciesName = "Desconocido",
+                            ErrorMessage = $"Error leyendo '{entry.Name}': {exEntry.Message}",
+                            LegalizationHint = null,
+                            ShowdownSet = entry.Name
+                        });
+                    }
+                }
+
+                // limpiar "procesando…"
+                try { await processingMessage.DeleteAsync().ConfigureAwait(false); } catch { }
+
+                // ¿hubo errores?
+                if (errors.Count > 0)
+                {
+                    await BatchHelpers<T>.SendBatchErrorEmbedAsync(Context, errors, entries.Count).ConfigureAwait(false);
+                }
+
+                // 7) Si hay al menos 1 válido → contenedor de lote y a la cola
+                if (batchPokemonList.Count > 0)
+                {
+                    var batchTradeCode = Info.GetRandomTradeCode(userID);
+                    await BatchHelpers<T>.ProcessBatchContainer(Context, batchPokemonList, batchTradeCode, batchPokemonList.Count)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                try { await processingMessage.DeleteAsync().ConfigureAwait(false); } catch { }
+                await Context.Channel.SendMessageAsync(
+                    $"{Context.User.Mention} Ocurrió un error al procesar tu .zip. Inténtalo de nuevo.")
+                    .ConfigureAwait(false);
+                Base.LogUtil.LogError($"BatchTradeZip error: {ex.Message}", nameof(BatchTradeZipAsync));
+            }
+        });
+
+        if (Context.Message is IUserMessage userMessage)
+            _ = Helpers<T>.DeleteMessagesAfterDelayAsync(userMessage, null, 2);
+    }
+
+    // Helper local para leer bytes de una entrada del zip
+    private static async Task<byte[]> ReadAllBytesAsync(Stream stream)
+    {
+        await using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms).ConfigureAwait(false);
+        return ms.ToArray();
     }
 
     #endregion

@@ -3,6 +3,8 @@ using Discord.Commands;
 using PKHeX.Core;
 using SysBot.Base;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace SysBot.Pokemon.Discord;
@@ -104,16 +106,107 @@ public class QueueModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
 
     [Command("queueList")]
     [Alias("ql")]
-    [Summary("Envía al MD la lista de usuarios en la cola.")]
+    [Summary("Envía al MD la lista de usuarios en la cola (paginado).")]
     [RequireSudo]
     public async Task ListUserQueue()
     {
-        var lines = SysCord<T>.Runner.Hub.Queues.Info.GetUserList("(ID {0}) - Code: {1} - {2} - {3}");
-        var msg = string.Join("\n", lines);
-        if (msg.Length < 3)
-            await ReplyAsync("La lista de espera está vacía.").ConfigureAwait(false);
-        else
-            await Context.User.SendMessageAsync(msg).ConfigureAwait(false);
+        var lines = SysCord<T>.Runner.Hub.Queues.Info
+            .GetUserList("(ID {0}) - Code: {1} - {2} - {3}")
+            .ToList();
+
+        var total = lines.Count;
+
+        if (total == 0)
+        {
+            var emptyEmbed = new EmbedBuilder()
+                .WithColor(Color.Red)
+                .WithTitle("📋 Lista de Espera")
+                .WithDescription("⚠️ La lista de espera está actualmente vacía.")
+                .WithFooter(f => f.Text = "Sistema de Cola - PokeNexo")
+                .WithThumbnailUrl("https://i.imgur.com/haOeRR9.gif")
+                .WithCurrentTimestamp()
+                .Build();
+
+            try
+            {
+                await Context.User.SendMessageAsync(embed: emptyEmbed).ConfigureAwait(false);
+                await Context.Message.AddReactionAsync(new Emoji("✅")).ConfigureAwait(false);
+                await ReplyAsync("📭 Te envié por DM la lista de espera, pero está vacía.").ConfigureAwait(false);
+            }
+            catch
+            {
+                await Context.Message.AddReactionAsync(new Emoji("❌")).ConfigureAwait(false);
+                await ReplyAsync($"⚠️ {Context.User.Mention}, No pude enviarte MD. Activa tus mensajes directos o envíame un DM primero.").ConfigureAwait(false);
+            }
+            return;
+        }
+
+        const int MaxEmbedDescription = 4096;
+        const int MaxLinesPerPage = 25;
+        var pages = BuildQueuePages(lines, MaxLinesPerPage, MaxEmbedDescription - 200);
+
+        try
+        {
+            var pageIndex = 1;
+            foreach (var page in pages)
+            {
+                var embed = new EmbedBuilder()
+                    .WithColor(Color.Blue)
+                    .WithTitle($"📋 Lista de Usuarios en Cola — Página {pageIndex}/{pages.Count}")
+                    .WithDescription($"```{page}```")
+                    .WithThumbnailUrl("https://i.imgur.com/Zs9hmNq.gif")
+                    .WithFooter(f => f.Text = $"Total en cola: {total}")
+                    .WithCurrentTimestamp()
+                    .Build();
+
+                await Context.User.SendMessageAsync(embed: embed).ConfigureAwait(false);
+                pageIndex++;
+            }
+
+            await Context.Message.AddReactionAsync(new Emoji("✅")).ConfigureAwait(false);
+            await ReplyAsync($"✅ {Context.User.Mention}, la lista de espera (total: **{total}**) fue enviada a tus mensajes directos.").ConfigureAwait(false);
+        }
+        catch
+        {
+            await Context.Message.AddReactionAsync(new Emoji("❌")).ConfigureAwait(false);
+            await ReplyAsync("⚠️ No pude enviarte MD. Activa tus mensajes directos o envíame un DM primero.").ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Construye páginas de texto combinando líneas sin superar los límites de Discord.
+    /// </summary>
+    private static List<string> BuildQueuePages(List<string> lines, int maxLinesPerPage, int maxCharsPerPage)
+    {
+        var pages = new List<string>();
+        var builder = new System.Text.StringBuilder();
+        var lineCountInPage = 0;
+
+        foreach (var line in lines)
+        {
+            var needNewPage = lineCountInPage >= maxLinesPerPage
+                              || builder.Length + line.Length + 1 > maxCharsPerPage;
+
+            if (needNewPage)
+            {
+                if (builder.Length > 0)
+                    pages.Add(builder.ToString());
+
+                builder.Clear();
+                lineCountInPage = 0;
+            }
+
+            if (builder.Length > 0)
+                builder.Append('\n');
+
+            builder.Append(line);
+            lineCountInPage++;
+        }
+
+        if (builder.Length > 0)
+            pages.Add(builder.ToString());
+
+        return pages;
     }
 
     [Command("queueToggle")]
@@ -124,8 +217,8 @@ public class QueueModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
     {
         var state = Info.ToggleQueue();
         var msg = state
-            ? $"✅ **Configuración de cola modificada**: Los usuarios ahora __pueden unirse__ a la **cola**."
-            : $"⚠️ **Configuración de cola modificada**: Los usuarios __**NO PUEDEN**__ unirse a la `cola` hasta que se vuelva a `habilitar`.";
+            ? $"✅ {Context.User.Mention} **Configuración de cola modificada**: Los usuarios ahora __pueden unirse__ a la **cola**."
+            : $"⚠️ {Context.User.Mention} **Configuración de cola modificada**: Los usuarios __**NO PUEDEN**__ unirse a la `cola` hasta que se vuelva a `habilitar`.";
 
         return Context.Channel.EchoAndReply(msg);
     }

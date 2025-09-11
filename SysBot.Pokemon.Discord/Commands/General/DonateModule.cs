@@ -1,92 +1,173 @@
 using Discord;
 using Discord.Commands;
-using System.Threading.Tasks;
 using System;
+using System.Globalization;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace SysBot.Pokemon.Discord
 {
     public class DonateModule : ModuleBase<SocketCommandContext>
     {
-        private static readonly string[] ThankYouMessages = new[]
+        private static readonly string[] ThankYouMessages =
         {
-            "¡Gracias por tu apoyo!", "¡Tu donación significa mucho!", "¡Eres increíble por apoyarnos!", "¡Gracias por ser parte de esto!", "¡Tu generosidad es apreciada!"
+            "¡Gracias por tu apoyo!",
+            "¡Tu donación significa mucho!",
+            "¡Eres increíble por apoyarnos!",
+            "¡Gracias por ser parte de esto!",
+            "¡Tu generosidad es apreciada!"
         };
 
         [Command("donate")]
-        [Alias("donation")]
-        [Summary("Muestra el enlace de donación del anfitrión.")]
-        public async Task PingAsync()
+        [Alias("donation", "donar", "donación")]
+        [Summary("Muestra el enlace de donación del anfitrión, con barra de progreso si está habilitada.")]
+        public async Task DonateAsync()
         {
             var settings = SysCordSettings.Settings;
-            var random = new Random();
-            var thankYouMessage = ThankYouMessages[random.Next(ThankYouMessages.Length)];
+            var donationSettings = settings?.Donation;
 
-            // Fetch donation settings from DonationOptions
-            var donationSettings = settings.Donation;
-
-            // Create a new EmbedBuilder
-            var embed = new EmbedBuilder
+            // Validaciones básicas
+            var link = donationSettings?.DonationLink?.Trim();
+            if (string.IsNullOrWhiteSpace(link))
             {
-                Color = new Color(255, 59, 48), // A vibrant red color for donations
-                Title = "❤️ ¡Enlace de Donación! ❤️", // Set the title of the embed
-                Description = $"{thankYouMessage} \n\n[¡Haz clic aquí para donar!]({donationSettings.DonationLink})",
-                Url = donationSettings.DonationLink // Set the URL for the title
-            };
-
-            // Add a thumbnail to the embed
-            embed.WithThumbnailUrl("https://smilingwithjerome.com/wp-content/uploads/2019/04/Donation-icon.png");
-
-            // Check if the progress bar is enabled in the settings
-            if (donationSettings.ProgressBar.ShowProgressBar)
-            {
-                // Parse donation goal and current donations from settings
-                double donationGoal = ParseDonationValue(donationSettings.ProgressBar.DonationGoal);
-                double currentDonations = ParseDonationValue(donationSettings.ProgressBar.DonationCurrent);
-
-                // Calculate progress towards the donation goal
-                double progress = donationGoal > 0 ? currentDonations / donationGoal : 0; // Avoid division by zero
-                string progressBar = GetProgressBar(progress);
-                string progressText = $"**${currentDonations:0.00} / ${donationGoal:0.00}** ({progress * 100:0}%)";
-
-                // Add the progress bar and goal tracker to the embed
-                embed.AddField("Progreso de la Meta de Donaciones", $"{progressBar}\n{progressText}");
+                await ReplyAsync("❌ No hay un enlace de donación configurado.").ConfigureAwait(false);
+                return;
             }
 
-            // Add a footer to the embed with the user's username and avatar
-            embed.WithFooter(footer =>
+            // Mensaje aleatorio de agradecimiento
+            var rng = new Random();
+            var thankYouMessage = ThankYouMessages[rng.Next(ThankYouMessages.Length)];
+
+            // Construcción del embed
+            var embed = new EmbedBuilder();
+
+            // Si hay barra de progreso, la usamos para decidir el color del embed
+            double goal = 0, current = 0, progress = 0;
+#pragma warning disable CS8602 // Dereference of a possibly null reference.
+            var showProgress = donationSettings.ProgressBar?.ShowProgressBar == true;
+#pragma warning restore CS8602 // Dereference of a possibly null reference.
+
+            if (showProgress)
             {
-                footer.Text = $"Solicitado por {Context.User.Username}";
-                footer.IconUrl = Context.User.GetAvatarUrl() ?? Context.User.GetDefaultAvatarUrl();
-            });
-
-            // Add a timestamp
-            embed.WithCurrentTimestamp();
-
-            // Send the embed as a reply
-            await ReplyAsync(embed: embed.Build()).ConfigureAwait(false);
-        }
-
-        // Helper method to create a progress bar
-        private string GetProgressBar(double progress)
-        {
-            const int totalBlocks = 10; // Number of blocks in the progress bar
-            int filledBlocks = (int)(progress * totalBlocks);
-            int emptyBlocks = totalBlocks - filledBlocks;
-
-            string filled = new string('█', filledBlocks); // Filled blocks
-            string empty = new string('░', emptyBlocks); // Empty blocks
-
-            return $"{filled}{empty}";
-        }
-
-        // Helper method to parse donation values from settings
-        private double ParseDonationValue(string value)
-        {
-            if (double.TryParse(value, out double result))
-            {
-                return result;
+#pragma warning disable CS8602 // Dereference of a possibly null reference.
+                goal = ParseMoney(donationSettings.ProgressBar.DonationGoal);
+#pragma warning restore CS8602 // Dereference of a possibly null reference.
+                current = ParseMoney(donationSettings.ProgressBar.DonationCurrent);
+                progress = goal > 0 ? Math.Clamp(current / goal, 0, 1) : 0;
+                embed.WithColor(ProgressColor(progress));
             }
-            return 0; // Default to 0 if parsing fails
+            else
+            {
+                embed.WithColor(new Color(255, 59, 48)); // Rojo llamativo por defecto
+            }
+
+            embed
+                .WithTitle("❤️ ¡Enlace de Donación! ❤️")
+                .WithDescription($"{thankYouMessage}\n\n[Haz clic aquí para donar]({link})")
+                .WithUrl(link)
+                .WithThumbnailUrl("https://i.imgur.com/0xwz3yL.png") // Ícono más limpio; cambia si prefieres otro
+                .WithFooter(footer =>
+                {
+                    footer.Text = $"Solicitado por {Context.User.Username}";
+                    footer.IconUrl = Context.User.GetAvatarUrl() ?? Context.User.GetDefaultAvatarUrl();
+                })
+                .WithCurrentTimestamp();
+
+            // Si está habilitado, añadimos barra + detalles
+            if (showProgress)
+            {
+                var bar = BuildProgressBar(progress, 12);
+                var (fmtCurrent, fmtGoal, fmtRemaining) = FormatMoneyTriple(current, goal);
+
+                embed.AddField("Progreso de la meta", $"{bar}\n**{fmtCurrent} / {fmtGoal}** ({progress * 100:0}%)");
+                if (goal > 0 && current < goal)
+                    embed.AddField("Restante", fmtRemaining, inline: true);
+            }
+
+            // Botón de enlace (mejor UX que solo link en el texto)
+            var components = new ComponentBuilder()
+                .WithButton("Donar 💖", style: ButtonStyle.Link, url: link)
+                .Build();
+
+            await ReplyAsync(embed: embed.Build(), components: components).ConfigureAwait(false);
         }
+
+        // --- Helpers ---
+
+        // Acepta valores con símbolo ($, €, etc.), comas y puntos. Intenta ser tolerante con formatos.
+        private static double ParseMoney(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+
+            // Quitar símbolos de moneda y espacios
+            var cleaned = Regex.Replace(value, @"[^\d.,-]", "").Trim();
+
+            // Intentar primero InvariantCulture (1234.56)
+            if (double.TryParse(cleaned, NumberStyles.Number | NumberStyles.AllowLeadingSign,
+                                CultureInfo.InvariantCulture, out var resultInv))
+            {
+                return Math.Max(0, resultInv);
+            }
+
+            // Intentar formato es-ES (1.234,56)
+            var es = new CultureInfo("es-ES");
+            if (double.TryParse(cleaned, NumberStyles.Number | NumberStyles.AllowLeadingSign,
+                                es, out var resultEs))
+            {
+                return Math.Max(0, resultEs);
+            }
+
+            return 0;
+        }
+
+        private static (string fmtCurrent, string fmtGoal, string fmtRemaining) FormatMoneyTriple(double current, double goal)
+        {
+            string F(double v) => v.ToString("C2", CultureInfo.GetCultureInfo("en-US")); // "$1,234.56"
+            var remaining = Math.Max(0, goal - current);
+            return (F(current), F(goal), F(remaining));
+        }
+
+        // Barra de progreso monospace con bloques llenos/vacíos
+        private static string BuildProgressBar(double progress, int segments = 10)
+        {
+            progress = Math.Clamp(progress, 0, 1);
+            segments = Math.Max(1, segments);
+
+            // Bloques estilizados que se ven bien en Discord
+            const char filled = '▰';
+            const char empty = '▱';
+
+            var filledCount = (int)Math.Round(progress * segments, MidpointRounding.AwayFromZero);
+            filledCount = Math.Clamp(filledCount, 0, segments);
+
+            return new string(filled, filledCount) + new string(empty, segments - filledCount);
+        }
+
+        // Color dinámico (rojo -> amarillo -> verde) según progreso
+        private static Color ProgressColor(double t)
+        {
+            t = Math.Clamp(t, 0, 1);
+            // 0..0.5: rojo->amarillo, 0.5..1: amarillo->verde
+            if (t < 0.5)
+            {
+                // Rojo (255,59,48) a Amarillo (255,204,0)
+                var k = t / 0.5;
+                int r = Lerp(255, 255, k);
+                int g = Lerp(59, 204, k);
+                int b = Lerp(48, 0, k);
+                return new Color(r, g, b);
+            }
+            else
+            {
+                // Amarillo (255,204,0) a Verde (16,185,129)
+                var k = (t - 0.5) / 0.5;
+                int r = Lerp(255, 16, k);
+                int g = Lerp(204, 185, k);
+                int b = Lerp(0, 129, k);
+                return new Color(r, g, b);
+            }
+        }
+
+        private static int Lerp(int a, int b, double t) => a + (int)Math.Round((b - a) * Math.Clamp(t, 0, 1));
     }
 }
