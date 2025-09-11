@@ -1,4 +1,4 @@
-﻿using Discord;
+using Discord;
 using Discord.Commands;
 using PKHeX.Core;
 using System.Threading.Tasks;
@@ -8,20 +8,18 @@ namespace SysBot.Pokemon.Discord;
 public class LegalityCheckModule : ModuleBase<SocketCommandContext>
 {
     [Command("lc"), Alias("check", "validate", "verify")]
-    [Summary("Verifies the attachment for legality.")]
+    [Summary("Verifica la legalidad del archivo adjunto.")]
     public async Task LegalityCheck()
     {
-        var attachments = Context.Message.Attachments;
-        foreach (var att in attachments)
+        foreach (var att in (System.Collections.Generic.IReadOnlyCollection<Attachment>)Context.Message.Attachments)
             await LegalityCheck(att, false).ConfigureAwait(false);
     }
 
     [Command("lcv"), Alias("verbose")]
-    [Summary("Verifies the attachment for legality with a verbose output.")]
+    [Summary("Verifica la legalidad del archivo adjunto con una salida detallada.")]
     public async Task LegalityCheckVerbose()
     {
-        var attachments = Context.Message.Attachments;
-        foreach (var att in attachments)
+        foreach (var att in (System.Collections.Generic.IReadOnlyCollection<Attachment>)Context.Message.Attachments)
             await LegalityCheck(att, true).ConfigureAwait(false);
     }
 
@@ -39,16 +37,16 @@ public class LegalityCheckModule : ModuleBase<SocketCommandContext>
         var builder = new EmbedBuilder
         {
             Color = la.Valid ? Color.Green : Color.Red,
-            Description = $"Legality Report for {download.SanitizedFileName}:",
+            Description = $"Informe de legalidad para: {download.SanitizedFileName}:",
         };
 
         builder.AddField(x =>
         {
-            x.Name = la.Valid ? "Valid" : "Invalid";
+            x.Name = la.Valid ? $"✅ Válido" : $"❌ Inválido";
             x.Value = la.Report(verbose);
             x.IsInline = false;
         });
 
-        await ReplyAsync("Here's the legality report!", false, builder.Build()).ConfigureAwait(false);
+        await ReplyAsync("Aquí está el informe de legalidad!", false, builder.Build()).ConfigureAwait(false);
     }
 }

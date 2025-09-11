@@ -7,26 +7,14 @@ public class BotSource<T>(RoutineExecutor<T> Bot)
     where T : class, IConsoleBotConfig
 {
     public readonly RoutineExecutor<T> Bot = Bot;
+
     private CancellationTokenSource Source = new();
 
-    public bool IsRunning { get; private set; }
     public bool IsPaused { get; private set; }
 
-    private bool IsStopping { get; set; }
+    public bool IsRunning { get; private set; }
 
-    public void Stop()
-    {
-        if (!IsRunning || IsStopping)
-            return;
-
-        IsStopping = true;
-        Source.Cancel();
-        Source = new CancellationTokenSource();
-
-        Task.Run(async () => await Bot.HardStop()
-            .ContinueWith(ReportFailure, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously)
-            .ContinueWith(_ => IsPaused = IsRunning = IsStopping = false));
-    }
+    public bool IsStopping { get; set; }
 
     public void Pause()
     {
@@ -39,18 +27,15 @@ public class BotSource<T>(RoutineExecutor<T> Bot)
             .ContinueWith(_ => IsPaused = false, TaskContinuationOptions.OnlyOnFaulted);
     }
 
-    public void Start()
+    public void RebootAndStop()
     {
-        if (IsPaused)
-            Stop(); // can't soft-resume; just re-launch
+        Stop();
 
-        if (IsRunning || IsStopping)
-            return;
-
-        IsRunning = true;
-        Task.Run(async () => await Bot.RunAsync(Source.Token)
+        Task.Run(() => Bot.RebootAndStopAsync(Source.Token)
             .ContinueWith(ReportFailure, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously)
             .ContinueWith(_ => IsRunning = false));
+
+        IsRunning = true;
     }
 
     public void Restart()
@@ -68,35 +53,63 @@ public class BotSource<T>(RoutineExecutor<T> Bot)
         }, TaskContinuationOptions.RunContinuationsAsynchronously | TaskContinuationOptions.NotOnFaulted);
     }
 
+    public void Resume()
+    {
+        Start();
+    }
+
+    public void Start()
+    {
+        if (IsPaused)
+            Stop(); // can't soft-resume; just re-launch
+
+        if (IsRunning || IsStopping)
+            return;
+
+        IsRunning = true;
+        Task.Run(async () => await Bot.RunAsync(Source.Token)
+            .ContinueWith(ReportFailure, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously)
+            .ContinueWith(_ => IsRunning = false));
+    }
+
+    public void Stop()
+    {
+        if (!IsRunning || IsStopping)
+            return;
+
+        IsStopping = true;
+        Source.Cancel();
+        Source = new CancellationTokenSource();
+
+        Task.Run(async () => await Bot.HardStop()
+            .ContinueWith(ReportFailure, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously)
+            .ContinueWith(_ => IsPaused = IsRunning = IsStopping = false));
+    }
+
     private void ReportFailure(Task finishedTask)
     {
         var ident = Bot.Connection.Name;
         var ae = finishedTask.Exception;
         if (ae == null)
         {
-            LogUtil.LogError("Bot has stopped without error.", ident);
+            LogUtil.LogError("El bot se ha detenido sin error.", ident);
             return;
         }
 
-        LogUtil.LogError("Bot has crashed!", ident);
+        LogUtil.LogError("¡El bot ha fallado!", ident);
 
         if (!string.IsNullOrEmpty(ae.Message))
-            LogUtil.LogError("Aggregate message: " + ae.Message, ident);
+            LogUtil.LogError("Mensaje agregado: " + ae.Message, ident);
 
         var st = ae.StackTrace;
         if (!string.IsNullOrEmpty(st))
-            LogUtil.LogError("Aggregate stacktrace: " + st, ident);
+            LogUtil.LogError("Stacktrace agregado: " + st, ident);
 
         foreach (var e in ae.InnerExceptions)
         {
             if (!string.IsNullOrEmpty(e.Message))
-                LogUtil.LogError("Inner message: " + e.Message, ident);
-            LogUtil.LogError("Inner stacktrace: " + e.StackTrace, ident);
+                LogUtil.LogError("Mensaje interno: " + e.Message, ident);
+            LogUtil.LogError("Stacktrace interno: " + e.StackTrace, ident);
         }
-    }
-
-    public void Resume()
-    {
-        Start();
     }
 }

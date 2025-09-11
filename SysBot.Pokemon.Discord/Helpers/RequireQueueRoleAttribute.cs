@@ -1,4 +1,4 @@
-﻿using Discord.Commands;
+using Discord.Commands;
 using Discord.WebSocket;
 using System;
 using System.Linq;
@@ -23,7 +23,7 @@ public sealed class RequireQueueRoleAttribute(string RoleName) : PreconditionAtt
 
         // Check if this user is a Guild User, which is the only context where roles exist
         if (context.User is not SocketGuildUser gUser)
-            return Task.FromResult(PreconditionResult.FromError("You must be sending the message from a guild to run this command."));
+            return Task.FromResult(PreconditionResult.FromError($"⚠️ Lo siento {context.User.Mention}, este comando solo puede ser usado dentro de un servidor y no en mensajes directos."));
 
         var roles = gUser.Roles;
         if (mgr.CanUseSudo(roles.Select(z => z.Name)))
@@ -31,10 +31,10 @@ public sealed class RequireQueueRoleAttribute(string RoleName) : PreconditionAtt
 
         bool canQueue = SysCordSettings.HubConfig.Queues.CanQueue;
         if (!canQueue)
-            return Task.FromResult(PreconditionResult.FromError("Sorry, I am not currently accepting queue requests!"));
+            return Task.FromResult(PreconditionResult.FromError($"❌ Lo siento {context.User.Mention}, actualmente no acepto solicitudes para entrar en la cola."));
 
         if (!mgr.GetHasRoleAccess(RoleName, roles.Select(z => z.Name)))
-            return Task.FromResult(PreconditionResult.FromError("You do not have the required role to run this command."));
+            return Task.FromResult(PreconditionResult.FromError($"⚠️ {context.User.Mention} No tienes el rol requerido para ejecutar este comando."));
 
         return Task.FromResult(PreconditionResult.FromSuccess());
     }

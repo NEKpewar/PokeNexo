@@ -9,11 +9,17 @@ namespace SysBot.Pokemon;
 
 public sealed class EncounterBotDogSWSH(PokeBotState Config, PokeTradeHub<PK8> Hub) : EncounterBotSWSH(Config, Hub)
 {
+    public override async Task RebootAndStop(CancellationToken t)
+    {
+        await ReOpenGame(new PokeTradeHubConfig(), t).ConfigureAwait(false);
+        await HardStop().ConfigureAwait(false);
+    }
+
     protected override async Task EncounterLoop(SAV8SWSH sav, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
-            Log("Looking for a new dog...");
+            Log("Buscando un nuevo perro...");
 
             // At the start of each loop, an A press is needed to exit out of a prompt.
             await Click(A, 0_100, token).ConfigureAwait(false);
@@ -23,11 +29,11 @@ public sealed class EncounterBotDogSWSH(PokeBotState Config, PokeTradeHub<PK8> H
             while (!await IsInBattle(token).ConfigureAwait(false))
                 await Click(A, 0_300, token).ConfigureAwait(false);
 
-            Log("Encounter started! Checking details...");
+            Log("¡Comenzó el encuentro! Comprobando detalles...");
             var pk = await ReadUntilPresent(LegendaryPokemonOffset, 2_000, 0_200, BoxFormatSlotSize, token).ConfigureAwait(false);
             if (pk == null)
             {
-                Log("Invalid data detected. Restarting loop.");
+                Log("Se detectaron datos no válidos. Reiniciando bucle.");
                 continue;
             }
 
@@ -37,14 +43,14 @@ public sealed class EncounterBotDogSWSH(PokeBotState Config, PokeTradeHub<PK8> H
             // Wait for the entire cutscene.
             await Task.Delay(15_000, token).ConfigureAwait(false);
 
-            while (!await IsOnBattleMenu(token).ConfigureAwait(false))
-                await Task.Delay(0_100, token).ConfigureAwait(false);
-            await Task.Delay(0_100, token).ConfigureAwait(false);
+            // Offsets are flickery so make sure we see it 3 times.
+            for (int i = 0; i < 3; i++)
+                await ReadUntilChanged(BattleMenuOffset, BattleMenuReady, 5_000, 0_100, true, token).ConfigureAwait(false);
 
             if (await HandleEncounter(pk, token).ConfigureAwait(false))
                 return;
 
-            Log("Running away...");
+            Log("Huyendo...");
             await FleeToOverworld(token).ConfigureAwait(false);
 
             // Extra delay to be sure we're fully out of the battle.

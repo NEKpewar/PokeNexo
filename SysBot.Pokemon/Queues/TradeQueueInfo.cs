@@ -1,9 +1,9 @@
 using PKHeX.Core;
 using SysBot.Base;
+using SysBot.Pokemon.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 
 namespace SysBot.Pokemon;
 
@@ -14,9 +14,18 @@ namespace SysBot.Pokemon;
 public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
     where T : PKM, new()
 {
-    private readonly Lock _sync = new();
+    private readonly object _sync = new();
     private readonly List<TradeEntry<T>> UsersInQueue = [];
     public readonly PokeTradeHub<T> Hub = Hub;
+    private readonly TradeCodeStorage _tradeCodeStorage = new();
+
+    public bool IsUserInQueue(ulong userId)
+    {
+        lock (_sync)
+        {
+            return UsersInQueue.Any(entry => entry.UserID == userId);
+        }
+    }
 
     public int Count
     {
@@ -43,31 +52,62 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
             return UsersInQueue.Find(z => z.UserID == uid);
     }
 
-    public QueueCheckResult<T> CheckPosition(ulong uid, PokeRoutineType type = 0)
+    public QueueCheckResult<T> CheckPosition(ulong uid, int uniqueTradeID, PokeRoutineType type = 0)
     {
         lock (_sync)
         {
-            var index = UsersInQueue.FindIndex(z => z.Equals(uid, type));
+            var allTrades = Hub.Queues.AllQueues.SelectMany(q => q.Queue.Select(x => x.Value)).ToList();
+
+            // Find the specific trade
+            var index = allTrades.FindIndex(z => z.Trainer.ID == uid && z.UniqueTradeID == uniqueTradeID);
             if (index < 0)
                 return QueueCheckResult<T>.None;
 
-            var entry = UsersInQueue[index];
-            var actualIndex = 1;
-            for (int i = 0; i < index; i++)
+            var entry = allTrades[index];
+
+            // Count total trades accounting for batch trades
+            int totalTradesAhead = 0;
+            int processingCount = 0;
+
+            for (int i = 0; i < allTrades.Count; i++)
             {
-                if (UsersInQueue[i].Type == entry.Type)
-                    actualIndex++;
+                var trade = allTrades[i];
+
+                // Count processing trades
+                if (trade.IsProcessing)
+                {
+                    processingCount++;
+                    continue;
+                }
+
+                // For trades ahead of us, count their actual trade count
+                if (i < index)
+                {
+                    if (trade.TotalBatchTrades > 1 && trade.BatchTrades != null)
+                        totalTradesAhead += trade.BatchTrades.Count;
+                    else
+                        totalTradesAhead += 1;
+                }
             }
 
-            var inQueue = UsersInQueue.Count(z => z.Type == entry.Type);
+            // Calculate actual position
+            var actualIndex = totalTradesAhead + 1 + processingCount;
 
-            return new QueueCheckResult<T>(true, entry, actualIndex, inQueue);
+            // Calculate total trades in queue
+            var totalInQueue = allTrades.Sum(trade =>
+            {
+                if (trade.TotalBatchTrades > 1 && trade.BatchTrades != null)
+                    return trade.BatchTrades.Count;
+                return 1;
+            }) + processingCount;
+
+            return new QueueCheckResult<T>(true, new TradeEntry<T>(entry, uid, type, entry.Trainer.TrainerName, uniqueTradeID), actualIndex, totalInQueue);
         }
     }
 
-    public string GetPositionString(ulong uid, PokeRoutineType type = PokeRoutineType.Idle)
+    public string GetPositionString(ulong uid, int uniqueTradeID, PokeRoutineType type = PokeRoutineType.Idle)
     {
-        var check = CheckPosition(uid, type);
+        var check = CheckPosition(uid, uniqueTradeID, type);
         return check.GetMessage();
     }
 
@@ -77,7 +117,7 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
         {
             var queue = Hub.Queues.GetQueue(t);
             if (queue.Count == 0)
-                return "Nobody in queue.";
+                return "Nadie en la cola.";
             return queue.Summary();
         }
     }
@@ -88,6 +128,26 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
         {
             Hub.Queues.ClearAll();
             UsersInQueue.Clear();
+        }
+    }
+
+    public void CleanStuckTrades()
+    {
+        lock (_sync)
+        {
+            var stuckTrades = UsersInQueue.Where(x => x.Trade.IsProcessing).ToList();
+            foreach (var trade in stuckTrades)
+            {
+                trade.Trade.IsProcessing = false;
+                Remove(trade);
+
+                // Also release batch tracker if it's a batch trade
+                if (trade.Trade.TotalBatchTrades > 1)
+                {
+                    var tracker = BatchTradeTracker<T>.Instance;
+                    tracker.ReleaseBatch(trade.UserID, trade.Trade.UniqueTradeID);
+                }
+            }
         }
     }
 
@@ -108,45 +168,53 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
         if (details.Count == 0)
             return QueueResultRemove.NotInQueue;
 
-        int removedCount = ClearTrade(details, Hub);
+        bool removedAll = true;
+        bool currentlyProcessing = false;
+        bool removedPending = false;
 
-        if (removedCount == details.Count)
-            return QueueResultRemove.Removed;
-
-        bool canRemoveWhileProcessing = Hub.Config.Queues.CanDequeueIfProcessing;
-        foreach (var detail in details)
+        foreach (var detail in details.ToList())
         {
-            if (detail.Trade.IsProcessing && !canRemoveWhileProcessing)
-                continue;
-            Remove(detail);
+            if (detail.Trade.IsProcessing)
+            {
+                currentlyProcessing = true;
+                if (!Hub.Config.Queues.CanDequeueIfProcessing)
+                {
+                    removedAll = false;
+                    detail.Trade.IsCanceled = true;
+                    continue;
+                }
+            }
+
+            if (RemoveTradeEntry(detail))
+                removedPending = true;
         }
 
-        return canRemoveWhileProcessing
-            ? QueueResultRemove.CurrentlyProcessingRemoved
-            : QueueResultRemove.CurrentlyProcessing;
+        if (!removedAll && currentlyProcessing && !removedPending)
+            return QueueResultRemove.CurrentlyProcessing;
+
+        if (currentlyProcessing && removedPending)
+            return QueueResultRemove.CurrentlyProcessingRemoved;
+
+        if (removedPending)
+            return QueueResultRemove.Removed;
+
+        return QueueResultRemove.NotInQueue;
     }
 
-    public int ClearTrade(IEnumerable<TradeEntry<T>> details, PokeTradeHub<T> hub)
+    private bool RemoveTradeEntry(TradeEntry<T> entry)
     {
-        int removedCount = 0;
-        lock (_sync)
+        if (Remove(entry))
         {
-            var queues = hub.Queues.AllQueues;
-            foreach (var detail in details)
+            var queue = Hub.Queues.GetQueue(entry.Type);
+            var tradeDetail = queue.Queue.FirstOrDefault(x => x.Value.Equals(entry.Trade));
+            if (tradeDetail.Value != null)
             {
-                if (detail.Trade.IsProcessing && !Hub.Config.Queues.CanDequeueIfProcessing)
-                    continue;
-                foreach (var queue in queues)
-                {
-                    int removed = queue.Remove(detail.Trade);
-                    if (removed != 0)
-                        UsersInQueue.Remove(detail);
-                    removedCount += removed;
-                }
+                if (queue.Remove(tradeDetail.Value) > 0)
+                    return true;
             }
         }
 
-        return removedCount;
+        return false;
     }
 
     public IEnumerable<string> GetUserList(string fmt)
@@ -154,6 +222,14 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
         lock (_sync)
         {
             return UsersInQueue.Select(z => string.Format(fmt, z.Trade.ID, z.Trade.Code, z.Trade.Type, z.Username, (Species)z.Trade.TradeData.Species));
+        }
+    }
+
+    public IEnumerable<ulong> GetUserIdList(int count)
+    {
+        lock (_sync)
+        {
+            return UsersInQueue.Take(count).Select(z => z.Trade.Trainer.ID);
         }
     }
 
@@ -169,22 +245,25 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
     {
         lock (_sync)
         {
-            LogUtil.LogInfo($"Removing {detail.Trade.Trainer.TrainerName}", nameof(TradeQueueInfo<T>));
+            LogUtil.LogInfo($"Removiendo {detail.Trade.Trainer.TrainerName}", nameof(TradeQueueInfo<T>));
             return UsersInQueue.Remove(detail);
         }
     }
 
-    public QueueResultAdd AddToTradeQueue(TradeEntry<T> trade, ulong userID, bool sudo = false)
+    public QueueResultAdd AddToTradeQueue(TradeEntry<T> trade, ulong userID, bool allowMultiple = false, bool sudo = false)
     {
         lock (_sync)
         {
-            if (UsersInQueue.Any(z => z.UserID == userID) && !sudo)
+            if (UsersInQueue.Any(z => z.UserID == userID) && !allowMultiple && !sudo)
                 return QueueResultAdd.AlreadyInQueue;
 
             if (Hub.Config.Legality.ResetHOMETracker && trade.Trade.TradeData is IHomeTrack t)
                 t.Tracker = 0;
 
-            var priority = sudo ? PokeTradePriorities.Tier1 : PokeTradePriorities.TierFree;
+            var priority = sudo ? PokeTradePriorities.Tier1 :
+                           trade.Trade.IsFavored ? PokeTradePriorities.Tier2 :
+                           PokeTradePriorities.TierFree;
+
             var queue = Hub.Queues.GetQueue(trade.Type);
 
             queue.Enqueue(trade.Trade, priority);
@@ -195,11 +274,54 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
         }
     }
 
-    public int GetRandomTradeCode() => Hub.Config.Trade.GetRandomTradeCode();
+    public int GetRandomTradeCode(ulong trainerID)
+    {
+        if (Hub.Config.Trade.TradeConfiguration.StoreTradeCodes)
+        {
+            return _tradeCodeStorage.GetTradeCode(trainerID);
+        }
+        else
+        {
+            return Hub.Config.Trade.GetRandomTradeCode();
+        }
+    }
+
+    public List<Pictocodes> GetRandomLGTradeCode()
+    {
+        var code = new List<Pictocodes>();
+        for (int i = 0; i <= 2; i++)
+        {
+            code.Add((Pictocodes)Util.Rand.Next(10));
+            code.Add(Pictocodes.Pikachu);
+        }
+        return code;
+    }
 
     public int UserCount(Func<TradeEntry<T>, bool> func)
     {
         lock (_sync)
             return UsersInQueue.Count(func);
+    }
+
+    // Genpkm method
+    public (int effectiveCount, int processingBatchTrades) GetQueueStats()
+    {
+        lock (_sync)
+        {
+            var allTrades = Hub.Queues.AllQueues.SelectMany(q => q.Queue.Select(x => x.Value)).ToList();
+
+            // Count effective queue size (batch trades count as their full size)
+            int effectiveCount = allTrades
+                .GroupBy(t => new { t.Trainer.ID, t.UniqueTradeID })
+                .Sum(g => g.First().TotalBatchTrades > 1 ? g.First().TotalBatchTrades : g.Count());
+
+            // Count how many batch trades are currently processing
+            int processingBatchTrades = allTrades
+                .Where(t => t.IsProcessing && t.TotalBatchTrades > 1)
+                .GroupBy(t => new { t.Trainer.ID, t.UniqueTradeID })
+                .Count();
+
+            return (effectiveCount, processingBatchTrades);
+        }
     }
 }
