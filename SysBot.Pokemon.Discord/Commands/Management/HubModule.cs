@@ -13,95 +13,134 @@ public class HubModule<T> : ModuleBase<SocketCommandContext> where T : PKM, new(
 {
     [Command("status")]
     [Alias("stats")]
-    [Summary("Obtiene el estado del entorno del bot.")]
+    [Summary("Muestra el estado actual de los bots y sus colas.")]
     public async Task GetStatusAsync()
     {
-        var me = SysCord<T>.Runner;
-        var hub = me.Hub;
-
-        var builder = new EmbedBuilder
-        {
-            Color = Color.Gold,
-        };
-
         var runner = SysCord<T>.Runner;
+        var hub = runner.Hub;
         var allBots = runner.Bots.ConvertAll(z => z.Bot);
         var botCount = allBots.Count;
-        builder.AddField(x =>
+
+        // ---- Estado global para color/etiqueta ----
+        bool noBots = botCount == 0;
+        bool queuesEmpty = hub.Queues.AllQueues.All(q => q.Count == 0);
+        var (statusEmoji, statusLabel, embedColor) = GetGlobalStatus(noBots, queuesEmpty);
+
+        var builder = new EmbedBuilder()
+            .WithTitle($"{statusEmoji} Estado del Bot")
+            .WithColor(embedColor)
+            .WithCurrentTimestamp();
+
+        // Autor (usa el bot actual si está disponible)
+        var me = Context.Client.CurrentUser;
+        builder.WithAuthor(a =>
         {
-            x.Name = "Resumen:";
-            x.Value =
-                $"Recuento de bots: {botCount}\n" +
-                $"Estado de los Bot: {SummarizeBots(allBots)}\n" +
-                $"Pool Count: {hub.Ledy.Pool.Count}\n";
-            x.IsInline = false;
+            a.Name = me?.Username ?? "SysBot";
+            a.IconUrl = me?.GetAvatarUrl() ?? me?.GetDefaultAvatarUrl();
         });
 
-        builder.AddField(x =>
-        {
-            var bots = allBots.OfType<ICountBot>();
-            var lines = bots.SelectMany(z => z.Counts.GetNonZeroCounts()).Distinct();
-            var msg = string.Join("\n", lines);
-            if (string.IsNullOrWhiteSpace(msg))
-                msg = $"⚠️ Aún no se ha contabilizado nada!";
-            x.Name = "Recuentos:";
-            x.Value = msg;
-            x.IsInline = false;
-        });
+        // ---- Resumen ----
+        var botsSummary = SummarizeBotsWithBadges(allBots);
+        string botsSection = string.IsNullOrWhiteSpace(botsSummary)
+            ? ""
+            : $"\n```{botsSummary}```";
 
+        builder.AddField("__**📌 Resumen**__",
+            $"**Bots activos:** {botCount}{botsSection}\n" +
+            $"**Salud:** {statusLabel}\n" +
+            $"**Pool disponible:** {hub.Ledy.Pool.Count}",
+            inline: false);
+
+        // ---- Recuentos (si hay) ----
+        var botsWithCounts = allBots.OfType<ICountBot>();
+        var lines = botsWithCounts.SelectMany(z => z.Counts.GetNonZeroCounts()).Distinct();
+        var countsMsg = string.Join("\n", lines);
+        builder.AddField("__**🔢 Recuentos**__",
+            string.IsNullOrWhiteSpace(countsMsg) ? "No hay recuentos todavía." : countsMsg,
+            inline: false);
+
+        // ---- Colas ----
         var queues = hub.Queues.AllQueues;
-        int count = 0;
-        foreach (var q in queues)
-        {
-            var c = q.Count;
-            if (c == 0)
-                continue;
+        int totalQueued = queues.Sum(q => q.Count);
 
-            var nextMsg = GetNextName(q);
-            builder.AddField(x =>
+        if (totalQueued == 0)
+        {
+            builder.AddField("✅ Colas vacías", "Nadie está esperando en este momento.", inline: false);
+        }
+        else
+        {
+            // Resumen compacto primero
+            builder.AddField("__**🧾 Resumen de colas**__",
+                $"**Total en espera:** {totalQueued}\n" +
+                $"**Tipos de cola activas:** {queues.Count(q => q.Count > 0)}",
+                inline: false);
+
+            // Luego, el detalle por cola
+            foreach (var q in queues.Where(q => q.Count > 0))
             {
-                x.Name = $"Cola {q.Type}";
-                x.Value =
-                    $"Siguiente: {nextMsg}\n" +
-                    $"Conteo: {c}\n";
-                x.IsInline = false;
-            });
-            count += c;
+                string queueEmoji = q.Count > 5 ? "🔥" : "⏳";
+                builder.AddField($"{queueEmoji} Cola: {q.Type}",
+                    $"👤 **Siguiente:** {GetNextName(q)}\n" +
+                    $"📦 **Pendientes:** {q.Count}",
+                    inline: false);
+            }
         }
 
-        if (count == 0)
-        {
-            builder.AddField(x =>
-            {
-                x.Name = $"⚠️ Las colas de espera están vacías.";
-                x.Value = $"⚠️ Nadie en la cola!";
-                x.IsInline = false;
-            });
-        }
+        await ReplyAsync(embed: builder.Build()).ConfigureAwait(false);
+    }
 
-        await ReplyAsync("Bot Status", false, builder.Build()).ConfigureAwait(false);
+    // ---------- Helpers ----------
+
+    private static (string emoji, string label, Color color) GetGlobalStatus(bool noBots, bool queuesEmpty)
+    {
+        if (noBots) return ("🟥", "Sin bots configurados", Color.DarkRed);
+        if (queuesEmpty) return ("🟩", "Estable (sin espera)", Color.Green);
+        return ("🟧", "Operativo (con colas)", Color.Orange);
     }
 
     private static string GetNextName(PokeTradeQueue<T> q)
     {
-        var next = q.TryPeek(out var detail, out _);
-        if (!next)
-            return "None!";
+        var hasNext = q.TryPeek(out var detail, out _);
+        if (!hasNext)
+            return "—";
 
         var name = detail.Trainer.TrainerName;
-
-        // show detail of trade if possible
         var nick = detail.TradeData.Nickname;
-        if (!string.IsNullOrEmpty(nick))
-            name += $" - {nick}";
-        return name;
+
+        return string.IsNullOrEmpty(nick) ? name : $"{name} - {nick}";
+    }
+
+    // ✅ Nueva presentación: badge + inline code por cada bot (sin flecha)
+    private static string SummarizeBotsWithBadges(IReadOnlyCollection<RoutineExecutor<PokeBotState>> bots)
+    {
+        if (bots.Count == 0)
+            return string.Empty;
+
+        var lines = bots.Select(z =>
+        {
+            var summary = z.GetSummary(); // ej: "192.168.0.1 - FlexTrade (Idle)"
+            var emoji = GetStatusEmojiFromSummary(summary);
+            return $"{emoji} {summary}";
+        });
+
+        return string.Join("\n", lines);
+    }
+
+    private static string GetStatusEmojiFromSummary(string summary)
+    {
+        var s = summary?.ToLowerInvariant() ?? string.Empty;
+
+        if (s.Contains("idle")) return "✅";
+        if (s.Contains("busy") || s.Contains("running") || s.Contains("trading")) return "🔄";
+        if (s.Contains("error") || s.Contains("stopped") || s.Contains("unknown")) return "⚠️";
+        return "ℹ️";
     }
 
     private static string SummarizeBots(IReadOnlyCollection<RoutineExecutor<PokeBotState>> bots)
     {
         if (bots.Count == 0)
-            return $"⚠️ No hay bots configurados.";
-        var summaries = bots.Select(z => $"- {z.GetSummary()}");
-        return Environment.NewLine + string.Join(Environment.NewLine, summaries);
+            return "⚠️ No hay bots configurados.";
+
+        return string.Join("\n", bots.Select(z => $"• {z.GetSummary()}"));
     }
 }

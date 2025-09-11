@@ -15,7 +15,7 @@ using SysBot.Pokemon.Discord.Models;
 
 namespace SysBot.Pokemon.Discord;
 
-public class PingModule : ModuleBase<SocketCommandContext>
+public class PingPong : ModuleBase<SocketCommandContext>
 {
     private const string StatsFilePath = "user_stats.json";
     private static readonly Dictionary<ulong, ChallengeRequest> ActiveChallenges = new();

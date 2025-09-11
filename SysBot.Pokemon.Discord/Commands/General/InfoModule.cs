@@ -2,7 +2,6 @@ using Discord;
 using Discord.Commands;
 using SysBot.Pokemon.Helpers;
 using System;
-using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
@@ -11,64 +10,77 @@ using System.Threading.Tasks;
 
 namespace SysBot.Pokemon.Discord;
 
-// src: https://github.com/foxbot/patek/blob/master/src/Patek/Modules/InfoModule.cs
-// ISC License (ISC)
-// Copyright 2017, Christopher F. <foxbot@protonmail.com>
+// src original inspirado en patek (ISC)
 public class InfoModule : ModuleBase<SocketCommandContext>
 {
-    private const string detail = "Soy un bot de Discord impulsado por PKHeX.Core y otros software de código abierto.";
+    private const string Detail =
+        "Soy un bot de Discord impulsado por PKHeX.Core y otros proyectos de código abierto. " +
+        "Gracias por usarme 💚";
 
-    private const string gengar = "https://github.com/hexbyt3/PokeBot";
-
-    private const string daifork = "https://github.com/Daiivr/PokeNexo";
-
+    private const string PokeBotRepo = "https://github.com/hexbyt3/PokeBot";
+    private const string ForkRepo = "https://github.com/Daiivr/PokeNexo";
     private const ulong DisallowedUserId = 195756980873199618;
 
     [Command("info")]
-    [Alias("about", "whoami", "owner")]
-    [Summary("Muestra información sobre el bot.")]
+    [Alias("about", "owner")]
+    [Summary("Muestra información general del bot (proyecto, versiones y entorno).")]
     public async Task InfoAsync()
     {
         if (Context.User.Id == DisallowedUserId)
         {
-            await ReplyAsync($"❌ No permitimos que personas turbias usen este comando.").ConfigureAwait(false);
+            await ReplyAsync("❌ No permitimos que personas turbias usen este comando.").ConfigureAwait(false);
             return;
         }
+
         var app = await Context.Client.GetApplicationInfoAsync().ConfigureAwait(false);
 
-        var builder = new EmbedBuilder
-        {
-            Color = new Color(114, 137, 218),
-            Description = detail,
-        };
+        // Color fijo agradable para “about”
+        var builder = new EmbedBuilder()
+            .WithAuthor(a =>
+            {
+                var me = Context.Client.CurrentUser;
+                a.Name = $"{me?.Username ?? "SysBot"}";
+                a.IconUrl = me?.GetAvatarUrl() ?? me?.GetDefaultAvatarUrl();
+            })
+            .WithTitle("ℹ️ Información del Bot")
+            .WithDescription(Detail)
+            .WithColor(new Color(67, 181, 129))
+            .WithThumbnailUrl("https://i.imgur.com/jYp2WsN.png")
+            .WithFooter($"Solicitado por {Context.User.Username}", Context.User.GetAvatarUrl())
+            .WithCurrentTimestamp();
 
-        builder.AddField("Info",
-            $"- [Código fuente de PokeBot]({gengar})\n" +
-            $"- [Codigo Fuente de este Bot]({daifork})\n" +
-            $"- {Format.Bold("Propietario")}: {app.Owner} ({app.Owner.Id})\n" +
-            $"- {Format.Bold("Biblioteca")}: Discord.Net ({DiscordConfig.Version})\n" +
-            $"- {Format.Bold("Tiempo de actividad")}: {GetUptime()}\n" +
-            $"- {Format.Bold("Tiempo de ejecución")}: {RuntimeInformation.FrameworkDescription} {RuntimeInformation.ProcessArchitecture} " +
-            $"({RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture})\n" +
-            $"- {Format.Bold("Tiempo de compilación")}: {GetVersionInfo("SysBot.Base", false)}\n" +
-            $"- {Format.Bold("Versión del Bot")}: {PokeNexo.Version}\n" +
-            $"- {Format.Bold("Versión de PKHeX")}: {GetVersionInfo("PKHeX.Core")}\n" +
-            $"- {Format.Bold("Versión de AutoLegality")}: {GetVersionInfo("PKHeX.Core.AutoMod")}\n"
-        );
+        // Proyecto / dueño / librería
+        builder.AddField("__**📦 Proyecto**__",
+            $"- **Código fuente (PokeBot):** {Format.Url("GitHub", PokeBotRepo)}\n" +
+            $"- **Código fuente (este fork):** {Format.Url("GitHub", ForkRepo)}\n" +
+            $"- **Propietario:** {app.Owner} (`{app.Owner.Id}`)\n" +
+            $"- **Librería:** Discord.Net (`{DiscordConfig.Version}`)",
+            inline: false);
 
-        builder.AddField("Estadísticas",
-            $"- {Format.Bold("Tamaño")}: {GetHeapSize()}MiB\n" +
-            $"- {Format.Bold("Servers")}: {Context.Client.Guilds.Count}\n" +
-            $"- {Format.Bold("Canales")}: {Context.Client.Guilds.Sum(g => g.Channels.Count)}\n" +
-            $"- {Format.Bold("Usuarios")}: {Context.Client.Guilds.Sum(g => g.MemberCount)}\n\n" +
-            $"{Format.Bold("Gracias, [Project Pokémon](https://projectpokemon.org), por hacer públicos los sprites e imágenes de Pokémon utilizados en este bot!")}\n"
-        );
-        builder.WithThumbnailUrl("https://i.imgur.com/jW1fEH5.png");
-        await ReplyAsync("He aquí un poco de informacion sobre mí!", embed: builder.Build()).ConfigureAwait(false);
+        // Versiones (ajusta PokeNexo.Version si aplica en tu solución)
+        builder.AddField("__**🏷️ Versiones**__",
+            $"- **Bot:** `{PokeNexo.Version}`\n" +
+            $"- **PKHeX.Core:** `{GetVersionInfo("PKHeX.Core")}`\n" +
+            $"- **AutoLegality:** `{GetVersionInfo("PKHeX.Core.AutoMod")}`\n" +
+            $"- **SysBot.Base (build):** `{GetVersionInfo("SysBot.Base", inclVersion: false)}`",
+            inline: false);
+
+        // Entorno (runtime/OS/arquitectura)
+        builder.AddField("__**⚙️ Entorno**__",
+            $"`{RuntimeInformation.FrameworkDescription}` `{RuntimeInformation.ProcessArchitecture}`\n" +
+            $"`{RuntimeInformation.OSDescription}` `{RuntimeInformation.OSArchitecture}`",
+            inline: false);
+
+        // Agradecimiento (de nuevo incluido)
+        builder.AddField("__**🙏 Créditos**__",
+            $"**Gracias**, __**{Format.Url("Project Pokémon", "https://projectpokemon.org")}**__ " +
+            "**por los sprites e imágenes públicos usados en este bot.**",
+            inline: false);
+
+        await ReplyAsync(embed: builder.Build()).ConfigureAwait(false);
     }
 
-    private static string GetUptime() => (DateTime.Now - Process.GetCurrentProcess().StartTime).ToString(@"dd\.hh\:mm\:ss");
-    private static string GetHeapSize() => Math.Round(GC.GetTotalMemory(true) / (1024.0 * 1024.0), 2).ToString(CultureInfo.CurrentCulture);
+    // ----------------- Helpers -----------------
 
     private static string GetVersionInfo(string assemblyName, bool inclVersion = true)
     {
@@ -80,16 +92,21 @@ public class InfoModule : ModuleBase<SocketCommandContext>
         if (attribute is null)
             return _default;
 
-        var info = attribute.InformationalVersion;
+        var info = attribute.InformationalVersion; // e.g., "1.0.0+240910231500"
         var split = info.Split('+');
         if (split.Length >= 2)
         {
             var version = split[0];
             var revision = split[1];
-            if (DateTime.TryParseExact(revision, "yyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var buildTime))
-                return (inclVersion ? $"{version} " : "") + $@"{buildTime:yy-MM-dd\.hh\:mm}";
+            if (DateTime.TryParseExact(revision, "yyMMddHHmmss", CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out var buildTime))
+            {
+                return (inclVersion ? $"{version} " : "") + $@"{buildTime:yy-MM-dd\.HH\:mm}";
+            }
+
             return inclVersion ? version : _default;
         }
-        return _default;
+
+        return inclVersion ? info : _default;
     }
 }
