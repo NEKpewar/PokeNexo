@@ -29,6 +29,7 @@ public class DiscordManager(DiscordSettings Config)
     public RemoteControlAccessList RolesTrade => Config.RoleCanTrade;
 
     public RemoteControlAccessList RolesTradePlus => Config.RoleCanTradePlus;
+    public RemoteControlAccessList RolesTradePlusUnlimited => Config.RoleCanTradePlusUnlimited;
 
     public RemoteControlAccessList SudoDiscord => Config.GlobalSudoList;
 
@@ -68,6 +69,7 @@ public class DiscordManager(DiscordSettings Config)
         nameof(RolesClone) => RolesClone,
         nameof(RolesTrade) => RolesTrade,
         nameof(RolesTradePlus) => RolesTradePlus,
+        nameof(RolesTradePlusUnlimited) => RolesTradePlusUnlimited,
         nameof(RolesSeed) => RolesSeed,
         nameof(RolesDump) => RolesDump,
         nameof(RolesFixOT) => RolesFixOT,

@@ -69,7 +69,7 @@ public static class AutoLegalityExtensionsDiscord
             var successMsg = $" Aqui esta tu **{speciesName}** legalizado.";
             bool canGmax = pkm is PK8 pk8 && pk8.CanGigantamax;
 
-            var speciesImageUrl = Helpers.TradeExtensions<PK9>.PokeImg(pkm, canGmax, false);
+            var speciesImageUrl = SysBot.Pokemon.Helpers.TradeExtensions<PK9>.PokeImg(pkm, canGmax, false);
             // Create RegenTemplate from the legalized PKM
             var regenTemplate = new RegenTemplate(pkm);
             var regenText = regenTemplate.Text;
@@ -173,19 +173,19 @@ public static class AutoLegalityExtensionsDiscord
 
         if (pkm is PK8 pk8)
         {
-            pokeImgUrl = Helpers.TradeExtensions<PK8>.PokeImg(pk8, false, false);
+            pokeImgUrl = SysBot.Pokemon.Helpers.TradeExtensions<PK8>.PokeImg(pk8, false, false);
         }
         else if (pkm is PK9 pk9)
         {
-            pokeImgUrl = Helpers.TradeExtensions<PK9>.PokeImg(pk9, false, false);
+            pokeImgUrl = SysBot.Pokemon.Helpers.TradeExtensions<PK9>.PokeImg(pk9, false, false);
         }
         else if (pkm is PB8 pb8)
         {
-            pokeImgUrl = Helpers.TradeExtensions<PB8>.PokeImg(pb8, false, false);
+            pokeImgUrl = SysBot.Pokemon.Helpers.TradeExtensions<PB8>.PokeImg(pb8, false, false);
         }
         else if (pkm is PA8 pa8)
         {
-            pokeImgUrl = Helpers.TradeExtensions<PB8>.PokeImg(pa8, false, false);
+            pokeImgUrl = SysBot.Pokemon.Helpers.TradeExtensions<PB8>.PokeImg(pa8, false, false);
         }
 
         if (pokeImgUrl == null)
