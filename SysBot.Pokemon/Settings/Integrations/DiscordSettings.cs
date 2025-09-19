@@ -229,6 +229,8 @@ public class DiscordSettings
 
     [Category(Roles), Description("Los usuarios con esta función pueden utilizar las funciones Trade Adicionales.")]
     public RemoteControlAccessList RoleCanTradePlus { get; set; } = new() { AllowIfEmpty = true };
+    [Category(Roles), Description("Los usuarios con esta función pueden utilizar las funciones Trade Plus ilimitadas.")]
+    public RemoteControlAccessList RoleCanTradePlusUnlimited { get; set; } = new() { AllowIfEmpty = true };
 
     [Category(Roles), Description("Los usuarios con este rol pueden unirse a la cola con una mejor posición.")]
     public RemoteControlAccessList RoleFavored { get; set; } = new() { AllowIfEmpty = false };
@@ -296,3 +298,6 @@ public class Badge
 
     public override string ToString() => $"{Emoji}";
 }
+
+    [Category(Operation), Description("Límite diario de solicitudes BattleReady para usuarios con rol Plus (0 = sin límite).")]
+    public int BattleReadyPlusDailyLimit { get; set; } = 10;
