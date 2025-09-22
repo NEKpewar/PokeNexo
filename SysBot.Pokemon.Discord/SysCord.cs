@@ -1,22 +1,23 @@
 using Discord;
 using Discord.Commands;
+using Discord.Net;
 using Discord.WebSocket;
 using Microsoft.Extensions.DependencyInjection;
+using Newtonsoft.Json;
 using PKHeX.Core;
 using SysBot.Base;
+using SysBot.Pokemon.Discord.Commands.Bots;
+using SysBot.Pokemon.Discord.Extra;
+using SysBot.Pokemon.Discord.Models;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using static Discord.GatewayIntents;
 using static SysBot.Pokemon.DiscordSettings;
-using Discord.Net;
-using Newtonsoft.Json;
-using SysBot.Pokemon.Discord.Commands.Bots;
-using SysBot.Pokemon.Discord.Models;
 
 namespace SysBot.Pokemon.Discord;
 
@@ -82,6 +83,28 @@ public sealed class SysCord<T> where T : PKM, new()
             // you must set the MessageCacheSize. You may adjust the number as needed.
             //MessageCacheSize = 50,
         });
+
+        _client = new DiscordSocketClient(new DiscordSocketConfig
+        {
+            LogLevel = LogSeverity.Info,
+            GatewayIntents = Guilds | GuildMessages | DirectMessages | GuildMembers | GuildPresences | MessageContent,
+        });
+
+        // ===== DM Relay Setup =====
+        ulong forwardTargetId = 0;
+        if (!string.IsNullOrWhiteSpace(Hub.Config.Discord.UserDMsToBotForwarder))
+        {
+            if (!ulong.TryParse(Hub.Config.Discord.UserDMsToBotForwarder, out forwardTargetId))
+            {
+                LogUtil.LogInfo("SysCord", $"ID inválido en UserDMsToBotForwarder: {Hub.Config.Discord.UserDMsToBotForwarder}");
+            }
+        }
+
+        if (forwardTargetId != 0)
+        {
+            _ = new DMRelayService(_client, forwardTargetId);
+            LogUtil.LogInfo("SysCord", $"Relé de DMs activo -> reenviando DMs del bot a {forwardTargetId}");
+        }
 
         _commands = new CommandService(new CommandServiceConfig
         {
