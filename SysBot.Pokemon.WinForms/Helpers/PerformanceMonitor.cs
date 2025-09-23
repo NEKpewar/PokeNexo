@@ -254,9 +254,9 @@ namespace SysBot.Pokemon.WinForms.Helpers
 
         public override string ToString()
         {
-            var report = $"Performance Report:\n";
-            report += $"Average FPS: {AverageFps:F1}\n\n";
-            report += "Operation Statistics:\n";
+            var report = $"Informe de rendimiento:\n";
+            report += $"FPS promedio: {AverageFps:F1}\n\n";
+            report += "Estadística de operación:\n";
             
             foreach (var stat in OperationStats.Values.OrderByDescending(s => s.AverageMs))
             {

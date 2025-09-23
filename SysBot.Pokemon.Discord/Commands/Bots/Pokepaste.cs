@@ -17,35 +17,24 @@ using DiscordColor = Discord.Color;
 
 namespace SysBot.Pokemon.Discord
 {
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public class Pokepaste : ModuleBase<SocketCommandContext>
     {
         private static System.Drawing.Image CombineImages(List<System.Drawing.Image> images)
         {
-#pragma warning disable CA1416 // Validate platform compatibility
             int width = images.Sum(img => img.Width);
-#pragma warning restore CA1416 // Validate platform compatibility
-#pragma warning disable CA1416 // Validate platform compatibility
             int height = images.Max(img => img.Height);
-#pragma warning restore CA1416 // Validate platform compatibility
 
-#pragma warning disable CA1416 // Validate platform compatibility
             Bitmap combinedImage = new Bitmap(width, height);
-#pragma warning restore CA1416 // Validate platform compatibility
-#pragma warning disable CA1416 // Validate platform compatibility
             using (Graphics g = Graphics.FromImage(combinedImage))
             {
                 int offset = 0;
                 foreach (System.Drawing.Image img in images)
                 {
-#pragma warning disable CA1416 // Validate platform compatibility
                     g.DrawImage(img, offset, 0);
-#pragma warning restore CA1416 // Validate platform compatibility
-#pragma warning disable CA1416 // Validate platform compatibility
                     offset += img.Width;
-#pragma warning restore CA1416 // Validate platform compatibility
                 }
             }
-#pragma warning restore CA1416 // Validate platform compatibility
 
             return combinedImage;
         }
@@ -55,6 +44,12 @@ namespace SysBot.Pokemon.Discord
         [Summary("Genera un equipo a partir de una URL de pokepaste especificada y lo envía como archivos a través de DM.")]
         public async Task GenerateTeamFromUrlAsync(string pokePasteUrl)
         {
+            // Guard: System.Drawing usage below is Windows-only.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                await ReplyAsync("Este comando requiere Windows (System.Drawing).");
+                return;
+            }
             var generatingMessage = await ReplyAsync($"⏳ {Context.User.Mention} Generando y enviando tu equipo de Pokepaste. Espere por favor...");
             try
             {
@@ -79,9 +74,7 @@ namespace SysBot.Pokemon.Discord
                     }
 
                     var namer = new GengarNamer();
-#pragma warning disable CA1416 // Validate platform compatibility
                     var pokemonImages = new List<System.Drawing.Image>();
-#pragma warning restore CA1416 // Validate platform compatibility
 
                     await using var memoryStream = new MemoryStream();
                     using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, true))
@@ -121,12 +114,8 @@ namespace SysBot.Pokemon.Discord
                                 await entryStream.WriteAsync(pk.Data.ToArray());
 
                                 string speciesImageUrl = TradeExtensions<PK9>.PokeImg(pk, false, false);
-#pragma warning disable CA1416 // Validate platform compatibility
                                 var speciesImage = await Task.Run(() => System.Drawing.Image.FromStream(new HttpClient().GetStreamAsync(speciesImageUrl).Result)).ConfigureAwait(false);
-#pragma warning restore CA1416 // Validate platform compatibility
-#pragma warning disable CA1416 // Validate platform compatibility
                                 pokemonImages.Add(speciesImage);
-#pragma warning restore CA1416 // Validate platform compatibility
                             }
                             catch (Exception ex)
                             {
@@ -144,14 +133,10 @@ namespace SysBot.Pokemon.Discord
                     await Context.User.SendFileAsync(memoryStream, $"{title}.zip", text: "Aquí está tu equipo!").ConfigureAwait(false);
 
                     // Save the combined image as a file
-#pragma warning disable CA1416 // Validate platform compatibility
                     combinedImage.Save($"{title}.png");
-#pragma warning restore CA1416 // Validate platform compatibility
                     await using (var imageStream = new MemoryStream())
                     {
-#pragma warning disable CA1416 // Validate platform compatibility
                         combinedImage.Save(imageStream, System.Drawing.Imaging.ImageFormat.Png);
-#pragma warning restore CA1416 // Validate platform compatibility
                         imageStream.Position = 0;
 
                         // Send the combined image file with an embed to the channel

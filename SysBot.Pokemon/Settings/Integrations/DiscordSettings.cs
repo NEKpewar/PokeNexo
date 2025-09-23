@@ -96,6 +96,9 @@ public class DiscordSettings
     [Category(Operation), Description("Texto adicional para agregar al comienzo del Embed."), DisplayName("Texto adicional del embed")]
     public string[] AdditionalEmbedText { get; set; } = Array.Empty<string>();
 
+    [Category(Channels), Description("ID de usuario o de canal al que se reenviarán los DMs del bot. Déjalo vacío para desactivar."), DisplayName("Reenviar DMs")]
+    public string UserDMsToBotForwarder { get; set; } = string.Empty;
+
     [Category(Users), Description("Deshabilitar esto eliminará la compatibilidad global con sudo.")]
     public bool AllowGlobalSudo { get; set; } = true;
 

@@ -462,7 +462,10 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                                             $"- 📥 Importación rápida de equipos.\n" +
                                             $"- ⚔️ Compatible con equipos de VGC.\n" +
                                             $"- 🤝 Facilita compartir estrategias en la comunidad.\n" +
-                                            $"- 🔗 Solo necesitas la URL de PokePaste.");
+                                            $"- 🔗 Solo necesitas la URL de PokePaste.\n\n" +
+                                            $"## Recursos:\n" +
+                                            $"Si no tienes un link de equipo, aquí puedes encontrar varios ya preparados:\n" +
+                                            $"[📑 Hoja de PokePaste](https://docs.google.com/spreadsheets/d/1axlwmzPA49rYkqXh7zHvAtSP-TKbM0ijGYBPRflLSWw/edit?gid=736919171#gid=736919171)");
                     break;
                 case "srp":
                     builder.WithAuthor("Pedir Regalos Misteriosos", icon)
